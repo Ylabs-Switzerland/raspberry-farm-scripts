@@ -1,15 +1,16 @@
 #!/bin/bash
 #
-# Full Raspberry Pi setup script for Ubuntu (64-bit)
-# - Miniconda installation + conda env
-# - Python libs in conda
-# - I2C setup
-# - mystats systemd service
-# - MicroK8s install & enable
+# Raspberry Pi Ubuntu Setup Script
+# - Miniconda + 'statsenv' conda environment
+# - Python packages for I2C OLED stats
+# - I2C kernel config
+# - MicroK8s install
+# - Systemd service for stats.py
+# - Halo-style progress indicators
 
 set -e
 
-# Spinner (halo-like)
+# Spinner (Halo-style)
 spin='-\|/'
 i=0
 spinner_pid=0
@@ -36,14 +37,14 @@ stop_spinner() {
 }
 
 ########################################
-# 1) Update & install system packages
+# 1) Update & install base packages
 ########################################
 start_spinner "Updating package lists..."
 sudo apt-get update -y
 stop_spinner
 
-start_spinner "Installing system tools..."
-sudo apt-get install -y wget git i2c-tools libgpiod-dev
+start_spinner "Installing system packages..."
+sudo apt-get install -y wget git i2c-tools libgpiod-dev libi2c0 read-edid
 stop_spinner
 
 ########################################
@@ -53,7 +54,7 @@ start_spinner "Downloading Miniconda..."
 wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh -O miniconda.sh
 stop_spinner
 
-start_spinner "Installing Miniconda..."
+start_spinner "Installing Miniconda to /opt..."
 sudo bash miniconda.sh -b -p /opt/miniconda
 stop_spinner
 
@@ -63,61 +64,72 @@ start_spinner "Creating conda environment 'statsenv'..."
 conda create -y -n statsenv python=3.9
 stop_spinner
 
-start_spinner "Activating conda environment..."
+start_spinner "Activating 'statsenv' environment..."
 conda activate statsenv
 stop_spinner
 
 ########################################
-# 3) Install Python dependencies (conda env)
+# 3) Install Python packages (with gcc fix)
 ########################################
-start_spinner "Installing Python packages into 'statsenv'..."
-pip install adafruit-circuitpython-ssd1306 adafruit-python-shell build click setuptools gpiod --upgrade --break-system-packages
+start_spinner "Installing compiler toolchain for Python packages..."
+sudo apt-get install -y build-essential
+stop_spinner
+
+start_spinner "Installing Python packages in conda env..."
+pip install \
+  adafruit-circuitpython-ssd1306 \
+  adafruit-python-shell \
+  build \
+  click \
+  setuptools \
+  gpiod \
+  --upgrade --break-system-packages
 stop_spinner
 
 ########################################
-# 4) Clone Adafruit repo & run libgpiod.py
+# 4) Clone Adafruit Scripts & run libgpiod.py
 ########################################
-start_spinner "Setting permissions for /opt..."
+start_spinner "Setting /opt ownership to ylabs..."
 sudo chown -R ylabs:ylabs /opt
 stop_spinner
 
 cd /opt
-start_spinner "Cloning Raspberry Pi Installer Scripts..."
+start_spinner "Cloning Adafruit Pi Installer Scripts..."
 git clone https://github.com/adafruit/Raspberry-Pi-Installer-Scripts.git || echo "Already cloned."
 stop_spinner
 
 cd Raspberry-Pi-Installer-Scripts
-start_spinner "Running libgpiod.py..."
+start_spinner "Running libgpiod.py with conda Python..."
 /opt/miniconda/envs/statsenv/bin/python libgpiod.py
 stop_spinner
 
 ########################################
-# 5) Setup I2C modules & boot config
+# 5) I2C kernel module and boot config
 ########################################
 start_spinner "Loading I2C kernel modules..."
 sudo modprobe i2c-dev
 sudo modprobe i2c-bcm2708
 stop_spinner
 
-start_spinner "Configuring I2C to load on boot..."
+start_spinner "Enabling I2C on boot..."
 echo "i2c-dev" | sudo tee /etc/modules-load.d/i2c-dev.conf >/dev/null
 echo "i2c-bcm2708" | sudo tee /etc/modules-load.d/i2c-bcm2708.conf >/dev/null
 stop_spinner
 
-start_spinner "Ensuring I2C enabled in /boot/firmware/config.txt..."
+start_spinner "Configuring /boot/firmware/config.txt..."
 if ! grep -q "^dtparam=i2c_arm=on" /boot/firmware/config.txt; then
   echo "dtparam=i2c_arm=on" | sudo tee -a /boot/firmware/config.txt >/dev/null
 fi
 stop_spinner
 
 ########################################
-# 6) Install MicroK8s & enable
+# 6) Install MicroK8s
 ########################################
-start_spinner "Installing MicroK8s..."
+start_spinner "Installing MicroK8s via snap..."
 sudo snap install microk8s --classic
 stop_spinner
 
-start_spinner "Adding '$USER' to microk8s group..."
+start_spinner "Adding user '$USER' to microk8s group..."
 sudo usermod -aG microk8s "$USER"
 stop_spinner
 
@@ -145,18 +157,18 @@ Restart=on-failure
 WantedBy=multi-user.target
 EOF
 
-start_spinner "Reloading systemd & enabling mystats.service..."
+start_spinner "Enabling mystats systemd service..."
 sudo systemctl daemon-reload
 sudo systemctl enable mystats.service
 stop_spinner
 
 ########################################
-# 8) Reboot
+# 8) Final reboot
 ########################################
 echo ""
 echo "=============================================="
-echo " Setup completed successfully."
-echo " Rebooting system in 5 seconds..."
+echo " Setup completed successfully!"
+echo " System will reboot in 5 seconds..."
 echo "=============================================="
 sleep 5
 sudo reboot
